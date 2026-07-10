@@ -5,6 +5,8 @@ from rest_framework import status
 from .models import Product, Category
 from .models import Product
 from .serializers import ProductSerializer
+from .models import Order, OrderItem
+from decimal import Decimal
 
 @api_view(['POST'])
 # @permission_classes([IsAdminUser]) # Lock down so only you can access it
@@ -39,3 +41,46 @@ def public_product_list(request):
     products = Product.objects.filter(is_active=True).prefetch_related('variants')
     serializer = ProductSerializer(products, many=True)
     return Response(serializer.data)
+    
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def process_checkout(request):
+    data = request.data
+    items = data.get('items', [])
+    
+    if not items:
+        return Response({"error": "Cart is empty"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # 1. Create the base order
+    order = Order.objects.create(
+        customer_email=data.get('customer_email'),
+        shipping_address=data.get('shipping_address'),
+        status='pending'
+    )
+
+    calculated_total = Decimal('0.00')
+
+    # 2. Add items to the order securely
+    for item in items:
+        # In a real app, you would fetch the price from the DB here to prevent tampering
+        # For this MVP, we are extracting it from the JSON payload
+        price = Decimal(str(item.get('variants', [{}])[0].get('price', '0.00')))
+        qty = int(item.get('quantity', 1))
+        
+        OrderItem.objects.create(
+            order=order,
+            product_title=item.get('title'),
+            supplier_sku=item.get('variants', [{}])[0].get('supplier_sku', 'UNKNOWN'),
+            quantity=qty,
+            price_at_time=price
+        )
+        calculated_total += (price * qty)
+
+    # 3. Update total
+    order.total_amount = calculated_total
+    order.save()
+
+    # FUTURE: This is exactly where you will trigger the Celery Task 
+    # to send the 'order.id' to the AliExpress API for fulfillment!
+
+    return Response({"message": "Order processed successfully", "order_id": order.id}, status=status.HTTP_201_CREATED)
