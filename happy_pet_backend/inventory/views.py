@@ -1,4 +1,5 @@
 from rest_framework.decorators import api_view, permission_classes
+from .tasks import fulfill_order_with_supplier
 from rest_framework.permissions import IsAdminUser, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
@@ -7,6 +8,13 @@ from .models import Product
 from .serializers import ProductSerializer
 from .models import Order, OrderItem
 from decimal import Decimal
+import stripe
+from django.conf import settings
+
+
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
+
 
 @api_view(['POST'])
 # @permission_classes([IsAdminUser]) # Lock down so only you can access it
@@ -51,7 +59,7 @@ def process_checkout(request):
     if not items:
         return Response({"error": "Cart is empty"}, status=status.HTTP_400_BAD_REQUEST)
 
-    # 1. Create the base order
+    # 1. Start the order in our database
     order = Order.objects.create(
         customer_email=data.get('customer_email'),
         shipping_address=data.get('shipping_address'),
@@ -60,10 +68,7 @@ def process_checkout(request):
 
     calculated_total = Decimal('0.00')
 
-    # 2. Add items to the order securely
     for item in items:
-        # In a real app, you would fetch the price from the DB here to prevent tampering
-        # For this MVP, we are extracting it from the JSON payload
         price = Decimal(str(item.get('variants', [{}])[0].get('price', '0.00')))
         qty = int(item.get('quantity', 1))
         
@@ -76,11 +81,29 @@ def process_checkout(request):
         )
         calculated_total += (price * qty)
 
-    # 3. Update total
     order.total_amount = calculated_total
     order.save()
 
-    # FUTURE: This is exactly where you will trigger the Celery Task 
-    # to send the 'order.id' to the AliExpress API for fulfillment!
+    try:
+        # 2. Stripe expects amounts in cents (integers)
+        amount_in_cents = int(calculated_total * 100)
+        
+        intent = stripe.PaymentIntent.create(
+            amount=amount_in_cents,
+            currency="usd",
+            metadata={
+                "order_id": order.id,
+                "customer_email": order.customer_email
+            }
+        )
 
-    return Response({"message": "Order processed successfully", "order_id": order.id}, status=status.HTTP_201_CREATED)
+        fulfill_order_with_supplier.delay(order.id)
+        
+        # 3. Return the client_secret so React can finalize the payment
+        return Response({
+            "clientSecret": intent.client_secret,
+            "order_id": order.id
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
