@@ -1,17 +1,36 @@
-import React from 'react';
+// src/components/CartSidebar.jsx
+import React, { useState } from 'react';
 import { useCart } from '../context/CartContext';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements } from '@stripe/react-stripe-js';
+import CheckoutForm from './CheckoutForm';
+
+// Initialize Stripe with your public test key
+// TODO: Replace with your actual Stripe publishable key
+const stripePromise = loadStripe(
+  import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY
+);
 
 const CartSidebar = ({ isOpen, onClose }) => {
   const { cartItems } = useCart();
-  
+  const [clientSecret, setClientSecret] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [shippingAddress, setShippingAddress] = useState('');
+
   // Calculate total price
   const cartTotal = cartItems.reduce((total, item) => {
     const price = parseFloat(item.variants?.[0]?.price || 0);
     return total + (price * item.quantity);
   }, 0);
 
-  const handleCheckout = async () => {
-    if (cartItems.length === 0) return alert("Cart is empty!");
+  const startCheckout = async () => {
+    if (!customerEmail || !shippingAddress) {
+      return alert("Please fill out shipping details!");
+    }
+    
+    if (cartItems.length === 0) {
+      return alert("Cart is empty!");
+    }
     
     try {
       const response = await fetch('http://127.0.0.1:8000/api/admin/checkout/', {
@@ -19,18 +38,22 @@ const CartSidebar = ({ isOpen, onClose }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items: cartItems,
-          customer_email: "test@example.com", // We will make this dynamic later
-          shipping_address: "123 Pet Lane"
+          customer_email: customerEmail,
+          shipping_address: shippingAddress
         })
       });
       
+      const data = await response.json();
+      
       if (response.ok) {
-        alert("Order placed successfully! Sending to supplier...");
-        localStorage.removeItem('happy-pet-cart');
-        window.location.reload(); // Refresh to clear cart
+        // Save the client secret to reveal the Stripe Credit Card form
+        setClientSecret(data.clientSecret);
+      } else {
+        alert("Checkout failed: " + (data.error || "Unknown error"));
       }
     } catch (error) {
-      console.error("Checkout failed", error);
+      console.error("Checkout initiation failed", error);
+      alert("Network error. Please try again.");
     }
   };
 
@@ -45,33 +68,67 @@ const CartSidebar = ({ isOpen, onClose }) => {
           <button onClick={onClose} className="text-gray-500 font-bold hover:text-orange-500 text-xl">✕</button>
         </div>
 
-        {/* Cart Items */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {cartItems.map((item, index) => (
-            <div key={index} className="flex justify-between items-center border-b pb-2">
-              <div>
-                <p className="font-bold text-gray-800 line-clamp-1">{item.title}</p>
-                <p className="text-sm text-gray-500">Qty: {item.quantity}</p>
-              </div>
-              <p className="font-bold text-orange-600">
-                ${(parseFloat(item.variants?.[0]?.price || 0) * item.quantity).toFixed(2)}
-              </p>
+        {/* Form Inputs & Items */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {!clientSecret && (
+            <div className="space-y-3">
+              <h3 className="font-bold text-gray-700">Shipping Details</h3>
+              <input 
+                type="email" 
+                placeholder="Email Address" 
+                value={customerEmail} 
+                onChange={e => setCustomerEmail(e.target.value)}
+                className="w-full p-3 border rounded-xl focus:outline-orange-400"
+              />
+              <input 
+                type="text" 
+                placeholder="Full Delivery Address" 
+                value={shippingAddress} 
+                onChange={e => setShippingAddress(e.target.value)}
+                className="w-full p-3 border rounded-xl focus:outline-orange-400"
+              />
             </div>
-          ))}
+          )}
+
+          <div className="border-t pt-4 space-y-4">
+            <h3 className="font-bold text-gray-700">Review Items</h3>
+            {cartItems.map((item, idx) => (
+              <div key={idx} className="flex justify-between text-sm">
+                <span className="text-gray-600 line-clamp-1">{item.title} (x{item.quantity})</span>
+                <span className="font-bold text-gray-800">
+                  ${(parseFloat(item.variants?.[0]?.price || 0) * item.quantity).toFixed(2)}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* Footer */}
-        <div className="p-6 border-t bg-gray-50">
-          <div className="flex justify-between font-bold text-xl mb-4 text-gray-800">
+        {/* Footer Processing Interface */}
+        <div className="p-6 border-t bg-gray-50 space-y-4">
+          <div className="flex justify-between font-bold text-xl text-gray-800">
             <span>Total:</span>
             <span>${cartTotal.toFixed(2)}</span>
           </div>
-          <button 
-            onClick={handleCheckout}
-            className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-xl text-lg shadow-lg"
-          >
-            Checkout Securely
-          </button>
+
+          {!clientSecret ? (
+            <button 
+              onClick={startCheckout}
+              className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-xl text-lg shadow-lg transition-colors"
+            >
+              Proceed to Payment
+            </button>
+          ) : (
+            <Elements stripe={stripePromise}>
+              <CheckoutForm 
+                clientSecret={clientSecret} 
+                onPaymentSuccess={() => {
+                  alert("Success! Your pet products are on the way!");
+                  localStorage.removeItem('happy-pet-cart');
+                  window.location.reload();
+                }} 
+              />
+            </Elements>
+          )}
         </div>
       </div>
     </div>
