@@ -5,11 +5,7 @@ import { loadStripe } from '@stripe/stripe-js';
 import { Elements } from '@stripe/react-stripe-js';
 import CheckoutForm from './CheckoutForm';
 
-// Initialize Stripe with your public test key
-// TODO: Replace with your actual Stripe publishable key
-const stripePromise = loadStripe(
-  import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY
-);
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
 
 const CartSidebar = ({ isOpen, onClose }) => {
   const { cartItems } = useCart();
@@ -17,7 +13,6 @@ const CartSidebar = ({ isOpen, onClose }) => {
   const [customerEmail, setCustomerEmail] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
 
-  // Calculate total price
   const cartTotal = cartItems.reduce((total, item) => {
     const price = parseFloat(item.variants?.[0]?.price || 0);
     return total + (price * item.quantity);
@@ -33,7 +28,7 @@ const CartSidebar = ({ isOpen, onClose }) => {
     }
     
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/admin/checkout/', {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/checkout/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -46,7 +41,6 @@ const CartSidebar = ({ isOpen, onClose }) => {
       const data = await response.json();
       
       if (response.ok) {
-        // Save the client secret to reveal the Stripe Credit Card form
         setClientSecret(data.clientSecret);
       } else {
         alert("Checkout failed: " + (data.error || "Unknown error"));
@@ -122,7 +116,7 @@ const CartSidebar = ({ isOpen, onClose }) => {
               <CheckoutForm 
                 clientSecret={clientSecret} 
                 onPaymentSuccess={() => {
-                  alert("Success! Your pet products are on the way!");
+                  alert("🎉 Payment successful! Your pet products are on the way!");
                   localStorage.removeItem('happy-pet-cart');
                   window.location.reload();
                 }} 
