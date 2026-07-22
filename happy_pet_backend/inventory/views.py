@@ -1,39 +1,33 @@
+# inventory/views.py
 from rest_framework.decorators import api_view, permission_classes
-from .tasks import fulfill_order_with_supplier
 from rest_framework.permissions import IsAdminUser, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Product, Category
-from .models import Product
+from .models import Product, Category, Order, OrderItem
 from .serializers import ProductSerializer
-from .models import Order, OrderItem
 from decimal import Decimal
 import stripe
 from django.conf import settings
+import logging
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
+import json
 
-
-
+logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-
 @api_view(['POST'])
-# @permission_classes([IsAdminUser]) # Lock down so only you can access it
 def import_dropship_product(request):
     data = request.data
     
     try:
-        # Fallback to a general category or match it programmatically 
         category, _ = Category.objects.get_or_create(name="Uncategorized", slug="uncategorized")
         
-        # Create the base product
         product = Product.objects.create(
             title=data.get('title'),
             description=f"Imported from AliExpress. Original link: {data.get('source_url')}",
             category=category
         )
-        
-        # In production, you would trigger a Celery background task here 
-        # to download the image from data.get('image_url') and upload it to AWS S3.
 
         return Response(
             {"message": "Product imported successfully", "product_id": product.id}, 
@@ -44,7 +38,7 @@ def import_dropship_product(request):
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
 @api_view(['GET'])
-@permission_classes([AllowAny]) # Anyone visiting the site can view products
+@permission_classes([AllowAny])
 def public_product_list(request):
     products = Product.objects.filter(is_active=True).prefetch_related('variants')
     serializer = ProductSerializer(products, many=True)
@@ -59,11 +53,12 @@ def process_checkout(request):
     if not items:
         return Response({"error": "Cart is empty"}, status=status.HTTP_400_BAD_REQUEST)
 
-    # 1. Start the order in our database
+    # 1. Create the order
     order = Order.objects.create(
         customer_email=data.get('customer_email'),
         shipping_address=data.get('shipping_address'),
-        status='pending'
+        status='pending',
+        payment_status='pending'
     )
 
     calculated_total = Decimal('0.00')
@@ -85,25 +80,80 @@ def process_checkout(request):
     order.save()
 
     try:
-        # 2. Stripe expects amounts in cents (integers)
+        # 2. Create Stripe PaymentIntent
         amount_in_cents = int(calculated_total * 100)
         
         intent = stripe.PaymentIntent.create(
             amount=amount_in_cents,
             currency="usd",
             metadata={
-                "order_id": order.id,
+                "order_id": str(order.id),
                 "customer_email": order.customer_email
             }
         )
-
-        fulfill_order_with_supplier.delay(order.id)
         
-        # 3. Return the client_secret so React can finalize the payment
+        # 3. Save the PaymentIntent ID to the order
+        order.stripe_payment_intent = intent.id
+        order.save()
+        
+        # 4. Return the client_secret to the frontend
         return Response({
             "clientSecret": intent.client_secret,
-            "order_id": order.id
+            "order_id": str(order.id)
         }, status=status.HTTP_201_CREATED)
 
     except Exception as e:
+        # Delete the order if Stripe fails
+        order.delete()
+        logger.error(f"Stripe error: {str(e)}")
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+@csrf_exempt
+def stripe_webhook(request):
+    payload = request.body
+    sig_header = request.headers.get('Stripe-Signature')
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError:
+        return JsonResponse({'error': 'Invalid payload'}, status=400)
+    except stripe.error.SignatureVerificationError:
+        return JsonResponse({'error': 'Invalid signature'}, status=400)
+    
+    # Handle the event
+    if event['type'] == 'payment_intent.succeeded':
+        payment_intent = event['data']['object']
+        order_id = payment_intent['metadata'].get('order_id')
+        
+        if order_id:
+            try:
+                order = Order.objects.get(id=order_id)
+                order.payment_status = 'paid'
+                order.status = 'processing'
+                order.save()
+                
+                # NOW trigger the Celery task after payment is confirmed
+                from .tasks import fulfill_order_with_supplier
+                fulfill_order_with_supplier.delay(order_id)
+                
+                logger.info(f" Payment succeeded for order {order_id}")
+                
+            except Order.DoesNotExist:
+                logger.error(f" Order {order_id} not found")
+                
+    elif event['type'] == 'payment_intent.payment_failed':
+        payment_intent = event['data']['object']
+        order_id = payment_intent['metadata'].get('order_id')
+        
+        if order_id:
+            try:
+                order = Order.objects.get(id=order_id)
+                order.payment_status = 'failed'
+                order.save()
+                logger.info(f" Payment failed for order {order_id}")
+            except Order.DoesNotExist:
+                pass
+    
+    return JsonResponse({'status': 'success'})
