@@ -5,8 +5,12 @@ const ProductGrid = () => {
   const [products, setProducts] = useState([]);
 
   useEffect(() => {
-    fetch('http://127.0.0.1:8000/api/admin/products/')
-      .then(res => res.json())
+    // CRITICAL FIX: Updated to use the environment variable and correct route
+    fetch(`${import.meta.env.VITE_API_URL}/products/`)
+      .then(res => {
+        if (!res.ok) throw new Error("Network response was not ok");
+        return res.json();
+      })
       .then(data => setProducts(data))
       .catch(err => console.error("Error fetching Happy Pet data:", err));
   }, []);
@@ -17,7 +21,6 @@ const ProductGrid = () => {
         Trending in <span className="text-orange-500">Paradise</span> ✨
       </h2>
       
-      {/* Responsive Grid Layout */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
         {products.map(product => (
           <ProductCard key={product.id} product={product} />
