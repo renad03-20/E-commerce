@@ -1,13 +1,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
-// 1. Create the Context (the vault)
 const CartContext = createContext();
 
-// 2. Create the Provider (the manager of the vault)
 export const CartProvider = ({ children }) => {
   const [cartItems, setCartItems] = useState([]);
 
-  // Load cart from localStorage when the app first loads so items aren't lost on refresh
   useEffect(() => {
     const savedCart = localStorage.getItem('happy-pet-cart');
     if (savedCart) {
@@ -15,25 +12,27 @@ export const CartProvider = ({ children }) => {
     }
   }, []);
 
-  // Save to localStorage every time the cartItems array changes
   useEffect(() => {
     localStorage.setItem('happy-pet-cart', JSON.stringify(cartItems));
   }, [cartItems]);
 
-  // Function to add a product to the cart
-  const addToCart = (product) => {
-    const existingItem = cartItems.find((item) => item.id === product.id);
+  // CRITICAL FIX: Now accepts the selected variant alongside the product
+  const addToCart = (product, selectedVariant) => {
+    if (!selectedVariant) return;
+
+    // Create a unique ID for the cart so different sizes/colors don't merge
+    const cartItemId = `${product.id}-${selectedVariant.id}`;
+    
+    const existingItem = cartItems.find((item) => item.cartItemId === cartItemId);
     
     if (existingItem) {
-      // If it exists, just increase the quantity
       setCartItems(
         cartItems.map((item) => 
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+          item.cartItemId === cartItemId ? { ...item, quantity: item.quantity + 1 } : item
         )
       );
     } else {
-      // If it's new, add it to the cart array with a quantity of 1
-      setCartItems([...cartItems, { ...product, quantity: 1 }]);
+      setCartItems([...cartItems, { ...product, cartItemId, selectedVariant, quantity: 1 }]);
     }
   };
 
@@ -44,5 +43,4 @@ export const CartProvider = ({ children }) => {
   );
 };
 
-// 3. A custom hook to easily access the cart from any file
 export const useCart = () => useContext(CartContext);
