@@ -1,12 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useCart } from '../context/CartContext';
 
 const ProductCard = ({ product }) => {
   const { addToCart } = useCart();
-  // Grab the price of the first variant, fallback if no variants exist
-  const displayPrice = product.variants?.[0]?.price || "0.00";
   
-  // Placeholder image mimicking the soft, warm backgrounds
+  // State to track the currently selected variant (defaults to the first one)
+  const [selectedVariant, setSelectedVariant] = useState(product.variants?.[0] || null);
+  
+  const displayPrice = selectedVariant ? selectedVariant.price : "0.00";
   const placeholderImage = "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?q=80&w=500&auto=format&fit=crop";
 
   return (
@@ -23,20 +24,45 @@ const ProductCard = ({ product }) => {
           </span>
         </div>
 
-        <h3 className="text-gray-800 font-bold text-lg leading-tight line-clamp-2 px-1">
+        <h3 className="text-gray-800 font-bold text-lg leading-tight line-clamp-2 px-1 mb-3">
           {product.title}
         </h3>
+
+        {/* SHOPFIY-STYLE VARIANT DROPDOWN */}
+        {product.variants && product.variants.length > 1 ? (
+          <div className="px-1 mb-2">
+            <select 
+              className="w-full bg-white border border-orange-200 text-gray-700 text-sm rounded-lg focus:ring-orange-500 focus:border-orange-500 block p-2 outline-none"
+              value={selectedVariant?.id || ''}
+              onChange={(e) => {
+                const variant = product.variants.find(v => v.id.toString() === e.target.value);
+                setSelectedVariant(variant);
+              }}
+            >
+              {product.variants.map((variant) => (
+                <option key={variant.id} value={variant.id}>
+                  {variant.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="px-1 mb-2 text-sm text-gray-500 font-medium h-9 flex items-center">
+             {selectedVariant?.name !== 'Default' ? selectedVariant?.name : 'Standard'}
+          </div>
+        )}
       </div>
 
-      <div className="mt-4 pt-2 border-t border-orange-50 flex items-center justify-between px-1">
+      <div className="mt-4 pt-4 border-t border-orange-50 flex items-center justify-between px-1">
         <div>
           <span className="text-xs text-gray-400 block font-medium">Price</span>
           <span className="text-xl font-extrabold text-orange-600">${displayPrice}</span>
         </div>
         
         <button 
-          onClick={() => addToCart(product)}
-          className="bg-orange-500 hover:bg-orange-600 text-white font-semibold rounded-xl px-4 py-2 text-sm transition-colors shadow-sm shadow-orange-200"
+          onClick={() => addToCart(product, selectedVariant)}
+          disabled={!selectedVariant}
+          className="bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 text-white font-semibold rounded-xl px-4 py-2 text-sm transition-colors shadow-sm shadow-orange-200"
         >
           Add
         </button>
