@@ -14,32 +14,40 @@ const CartSidebar = ({ isOpen, onClose }) => {
   const [shippingAddress, setShippingAddress] = useState('');
 
   const cartTotal = cartItems.reduce((total, item) => {
-    const price = parseFloat(item.variants?.[0]?.price || 0);
-    return total + (price * item.quantity);
+    const price = parseFloat(item.selectedVariant?.price || 0);
+    return total + price * item.quantity;
   }, 0);
 
   const startCheckout = async () => {
     if (!customerEmail || !shippingAddress) {
       return alert("Please fill out shipping details!");
     }
-    
+
     if (cartItems.length === 0) {
       return alert("Cart is empty!");
     }
-    
+
+    const checkoutItems = cartItems.map(item => ({
+      id: item.id,
+      quantity: item.quantity,
+      selectedVariantId: item.selectedVariant?.id,
+    }));
+
     try {
       const response = await fetch(`${import.meta.env.VITE_API_URL}/checkout/`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-          items: cartItems,
+          items: checkoutItems,
           customer_email: customerEmail,
-          shipping_address: shippingAddress
-        })
+          shipping_address: shippingAddress,
+        }),
       });
-      
+
       const data = await response.json();
-      
+
       if (response.ok) {
         setClientSecret(data.clientSecret);
       } else {
@@ -59,7 +67,12 @@ const CartSidebar = ({ isOpen, onClose }) => {
         {/* Header */}
         <div className="p-6 border-b flex justify-between items-center bg-orange-50">
           <h2 className="text-2xl font-bold text-gray-800">Your Cart</h2>
-          <button onClick={onClose} className="text-gray-500 font-bold hover:text-orange-500 text-xl">✕</button>
+          <button
+            onClick={onClose}
+            className="text-gray-500 font-bold hover:text-orange-500 text-xl"
+          >
+            ✕
+          </button>
         </div>
 
         {/* Form Inputs & Items */}
@@ -67,37 +80,56 @@ const CartSidebar = ({ isOpen, onClose }) => {
           {!clientSecret && (
             <div className="space-y-3">
               <h3 className="font-bold text-gray-700">Shipping Details</h3>
-              <input 
-                type="email" 
-                placeholder="Email Address" 
-                value={customerEmail} 
-                onChange={e => setCustomerEmail(e.target.value)}
+
+              <input
+                type="email"
+                placeholder="Email Address"
+                value={customerEmail}
+                onChange={(e) => setCustomerEmail(e.target.value)}
                 className="w-full p-3 border rounded-xl focus:outline-orange-400"
               />
-              <input 
-                type="text" 
-                placeholder="Full Delivery Address" 
-                value={shippingAddress} 
-                onChange={e => setShippingAddress(e.target.value)}
+
+              <input
+                type="text"
+                placeholder="Full Delivery Address"
+                value={shippingAddress}
+                onChange={(e) => setShippingAddress(e.target.value)}
                 className="w-full p-3 border rounded-xl focus:outline-orange-400"
               />
             </div>
           )}
 
+          {/* Review Items */}
           <div className="border-t pt-4 space-y-4">
             <h3 className="font-bold text-gray-700">Review Items</h3>
-            {cartItems.map((item, idx) => (
-              <div key={idx} className="flex justify-between text-sm">
-                <span className="text-gray-600 line-clamp-1">{item.title} (x{item.quantity})</span>
+
+            {cartItems.map((item) => (
+              <div
+                key={item.cartItemId}
+                className="flex justify-between text-sm"
+              >
+                <span className="text-gray-600 line-clamp-1 pr-4">
+                  {item.title}
+                  <br />
+                  <span className="text-xs text-orange-500 font-semibold">
+                    {item.selectedVariant?.name}
+                  </span>{' '}
+                  (x{item.quantity})
+                </span>
+
                 <span className="font-bold text-gray-800">
-                  ${(parseFloat(item.variants?.[0]?.price || 0) * item.quantity).toFixed(2)}
+                  $
+                  {(
+                    parseFloat(item.selectedVariant?.price || 0) *
+                    item.quantity
+                  ).toFixed(2)}
                 </span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Footer Processing Interface */}
+        {/* Footer */}
         <div className="p-6 border-t bg-gray-50 space-y-4">
           <div className="flex justify-between font-bold text-xl text-gray-800">
             <span>Total:</span>
@@ -105,7 +137,7 @@ const CartSidebar = ({ isOpen, onClose }) => {
           </div>
 
           {!clientSecret ? (
-            <button 
+            <button
               onClick={startCheckout}
               className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-xl text-lg shadow-lg transition-colors"
             >
@@ -113,13 +145,13 @@ const CartSidebar = ({ isOpen, onClose }) => {
             </button>
           ) : (
             <Elements stripe={stripePromise}>
-              <CheckoutForm 
-                clientSecret={clientSecret} 
+              <CheckoutForm
+                clientSecret={clientSecret}
                 onPaymentSuccess={() => {
                   alert("🎉 Payment successful! Your pet products are on the way!");
                   localStorage.removeItem('happy-pet-cart');
                   window.location.reload();
-                }} 
+                }}
               />
             </Elements>
           )}
